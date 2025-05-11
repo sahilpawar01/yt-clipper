@@ -62,6 +62,10 @@ app.post("/api/clip", async (req, res) => {
           }
         });
 
+        ytDlp.stderr.on("data", (data) => {
+          console.error(`yt-dlp stderr: ${data}`);
+        });
+
         ytDlp.on("close", (code) => {
           if (code === 0) {
             if (detectedPath && fs.existsSync(detectedPath)) {
