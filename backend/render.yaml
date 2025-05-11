@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: yt-clipper-backend
+    env: node
+    plan: free
+    buildCommand: |
+      apt-get update
+      apt-get install -y ffmpeg python3-pip
+      pip3 install yt-dlp
+      npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+    autoDeploy: true
