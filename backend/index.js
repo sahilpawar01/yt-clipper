@@ -35,6 +35,7 @@ app.post("/api/clip", async (req, res) => {
       return new Promise((resolve, reject) => {
         const outputPathTemplate = outputPathBase + ".%(ext)s";
         let detectedPath = null;
+        let stderrBuffer = '';
         const section = `*${startTime}-${endTime}`;
         const ytDlp = spawn("python", [
           "-m", "yt_dlp",
@@ -63,7 +64,7 @@ app.post("/api/clip", async (req, res) => {
         });
 
         ytDlp.stderr.on("data", (data) => {
-          console.error(`yt-dlp stderr: ${data}`);
+          stderrBuffer += data.toString();
         });
 
         ytDlp.on("close", (code) => {
@@ -82,9 +83,11 @@ app.post("/api/clip", async (req, res) => {
                 return;
               }
             }
+            console.error("yt-dlp succeeded but no output file found. Stderr:", stderrBuffer);
             reject(new Error("yt-dlp succeeded but no output file found."));
           } else {
-            reject(new Error("yt-dlp failed with code " + code));
+            console.error("yt-dlp failed with code", code, "Stderr:", stderrBuffer);
+            reject(new Error("yt-dlp failed with code " + code + ". Stderr: " + stderrBuffer));
           }
         });
 
