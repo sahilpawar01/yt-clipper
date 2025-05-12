@@ -55,121 +55,107 @@ app.post("/api/clip", async (req, res) => {
 
   try {
     const { url, startTime, endTime } = req.body;
-    
-    // Input validation
     if (!url || !startTime || !endTime) {
       return res.status(400).json({ error: "url, startTime, and endTime are required" });
     }
 
-    if (!isValidYouTubeUrl(url)) {
-      return res.status(400).json({ error: "Invalid YouTube URL" });
-    }
+    console.log(`Attempting to download muxed video/audio for clipping from ${url}`);
+    console.log(`Using temporary muxed base: ${tempMuxedPathBase}`);
 
     // Download video segment with yt-dlp
     const runYtDlpDownload = (outputPathBase, startTime, endTime) => {
       return new Promise((resolve, reject) => {
         const outputPathTemplate = outputPathBase + ".%(ext)s";
         let detectedPath = null;
-        let stderrBuffer = '';
-        const section = `*${startTime}-${endTime}`;
+        let processStderr = "";
+        let processStdout = "";
         
-        const ytDlp = spawn("python", [
-          "-m", "yt_dlp",
+        console.log(`Starting yt-dlp partial download for muxed format to template '${outputPathTemplate}'`);
+        const section = `*${startTime}-${endTime}`;
+
+        const ytDlp = spawn("yt-dlp", [
           url,
           "-f",
-          "bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4][height<=1080]/best",
+          "bestvideo[protocol=https][ext=mp4]+bestaudio[protocol=https][ext=m4a]/bestvideo[protocol=https][ext=webm]+bestaudio[protocol=https][ext=webm]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo[ext=webm]+bestaudio[ext=webm]/best",
           "--download-sections",
           section,
           "-o",
           outputPathTemplate,
           "--no-check-certificates",
           "--no-warnings",
+          "--add-header",
+          "referer:youtube.com",
+          "--add-header",
+          "user-agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
           "--merge-output-format",
           "mp4",
-          "--user-agent",
-          getRandomUserAgent(),
-          "--socket-timeout",
-          "30",
-          "--retries",
-          "3",
-          "--fragment-retries",
-          "3",
-          "--extractor-retries",
-          "3",
-          "--ignore-errors",
-          "--no-playlist",
-          "--no-playlist-reverse",
-          "--cookies-from-browser",
-          "chrome",
-          "--geo-bypass",
-          "--no-check-certificate",
-          "--prefer-insecure",
-          "--extractor-args",
-          "youtube:player_client=android",
-          "--force-ipv4"
+          "--verbose"
         ]);
+
+        ytDlp.stderr.on("data", (data) => {
+          console.error(`yt-dlp stderr (muxed): ${data}`);
+          processStderr += data.toString();
+        });
 
         ytDlp.stdout.on("data", (data) => {
           const output = data.toString();
+          console.log(`yt-dlp stdout (muxed): ${output}`);
+          processStdout += output;
           const destinationMatch = output.match(/\[download\] Destination: (.+)/);
           if (destinationMatch && destinationMatch[1]) {
             const filePath = destinationMatch[1].trim();
             if (filePath.startsWith(outputPathBase)) {
+              console.log(`Detected download destination (muxed): ${filePath}`);
               detectedPath = filePath;
             }
           }
         });
 
-        ytDlp.stderr.on("data", (data) => {
-          stderrBuffer += data.toString();
-        });
-
         ytDlp.on("close", (code) => {
           if (code === 0) {
             if (detectedPath && fs.existsSync(detectedPath)) {
+              console.log(`yt-dlp download successful (muxed): ${detectedPath}`);
               resolve(detectedPath);
               return;
             }
             // Fallback: search for file
-            const files = fs.readdirSync(uploadsDir);
-            const foundFile = files.find(f => f.startsWith(path.basename(outputPathBase)));
-            if (foundFile) {
-              const fullPath = path.join(uploadsDir, foundFile);
-              if (fs.existsSync(fullPath)) {
-                resolve(fullPath);
-                return;
+            console.log(`Could not determine output file from stdout (muxed), attempting to find files...`);
+            try {
+              const files = fs.readdirSync(uploadsDir);
+              const foundFile = files.find(f => f.startsWith(path.basename(outputPathBase)));
+              if (foundFile) {
+                const fullPath = path.join(uploadsDir, foundFile);
+                if (fs.existsSync(fullPath)) {
+                  console.log(`Found downloaded file (muxed) by searching: ${fullPath}`);
+                  resolve(fullPath);
+                  return;
+                }
               }
+            } catch (findErr) {
+              console.error(`Error searching for downloaded file (muxed):`, findErr);
             }
-            console.error("yt-dlp succeeded but no output file found. Stderr:", stderrBuffer);
-            reject(new Error("yt-dlp succeeded but no output file found."));
+            console.error(`yt-dlp process (muxed) exited code 0 but no output file found.`);
+            reject(new Error(`yt-dlp (muxed) indicated success, but no output file was found. Stderr: ${processStderr}`));
           } else {
-            // Enhanced error handling
-            let errorMessage = "Failed to download video";
-            if (stderrBuffer.includes("This content isn't available")) {
-              errorMessage = "This video is not available. It might be private, age-restricted, or region-locked.";
-            } else if (stderrBuffer.includes("Video unavailable")) {
-              errorMessage = "This video is unavailable. It might have been removed or made private.";
-            } else if (stderrBuffer.includes("Sign in to confirm your age")) {
-              errorMessage = "This video is age-restricted and cannot be downloaded.";
-            }
-            console.error("yt-dlp failed with code", code, "Stderr:", stderrBuffer);
-            reject(new Error(errorMessage));
+            console.error(`yt-dlp process (muxed) exited with code ${code}. Stderr: ${processStderr}`);
+            reject(new Error(`yt-dlp download (muxed) failed with code ${code}. Stderr: ${processStderr}`));
           }
         });
 
         ytDlp.on("error", (err) => {
-          reject(new Error("Failed to start yt-dlp: " + err.message));
+          console.error(`Failed to start yt-dlp process (muxed):`, err);
+          reject(new Error(`Failed to start yt-dlp (muxed): ${err.message}`));
         });
       });
     };
 
-    // Download segment with retry logic
+    // Download segment
     try {
-      tempMuxedPath = await retry(() => runYtDlpDownload(tempMuxedPathBase, startTime, endTime));
+      tempMuxedPath = await runYtDlpDownload(tempMuxedPathBase, startTime, endTime);
     } catch (downloadError) {
-      console.error("Failed to download after retries:", downloadError);
+      console.error("yt-dlp muxed download failed.", downloadError);
       return res.status(400).json({
-        error: downloadError.message || "Failed to download video after multiple attempts. Please try again later."
+        error: downloadError.message || "Failed to download video. The video might be unavailable or restricted."
       });
     }
 
@@ -178,6 +164,8 @@ app.post("/api/clip", async (req, res) => {
         error: "Failed to process video: No output file was created"
       });
     }
+
+    console.log(`Clipping muxed file (${tempMuxedPath}) from ${startTime} to ${endTime} into ${finalOutputPath}`);
 
     // Final trim with ffmpeg for compatibility
     const ffmpeg = spawn("ffmpeg", [
@@ -192,35 +180,53 @@ app.post("/api/clip", async (req, res) => {
       "-y", finalOutputPath
     ]);
 
+    let ffmpegStderr = "";
+    ffmpeg.stderr.on("data", (data) => {
+      console.log(`ffmpeg: ${data}`);
+      ffmpegStderr += data.toString();
+    });
+
     await new Promise((resolve, reject) => {
       ffmpeg.on("close", (code) => {
         if (code === 0) {
           if (fs.existsSync(finalOutputPath) && fs.statSync(finalOutputPath).size > 0) {
+            console.log("FFmpeg remux successful.");
             resolve();
           } else {
-            reject(new Error("FFmpeg output file missing or empty."));
+            console.error(`FFmpeg exited code 0 but output file missing or empty: ${finalOutputPath}`);
+            reject(new Error(`FFmpeg remux failed: Output file missing or empty. Stderr: ${ffmpegStderr}`));
           }
         } else {
-          reject(new Error("FFmpeg failed with code " + code));
+          console.error(`FFmpeg process exited with code ${code}. Stderr: ${ffmpegStderr}`);
+          reject(new Error(`FFmpeg remux failed with code ${code}. Stderr: ${ffmpegStderr}`));
         }
       });
       ffmpeg.on("error", (err) => {
-        reject(new Error("Failed to start ffmpeg: " + err.message));
+        console.error("Failed to start ffmpeg process:", err);
+        reject(new Error(`Failed to start ffmpeg: ${err.message}`));
       });
     });
 
-    // Send the final clipped video file as a download
-    const stream = fs.createReadStream(finalOutputPath);
-    res.setHeader('Content-Disposition', 'attachment; filename="clip.mp4"');
-    res.setHeader('Content-Type', 'video/mp4');
-    stream.pipe(res);
+    console.log(`Processing complete. Final clip available at: ${finalOutputPath}`);
 
-    stream.on('close', async () => {
-      // Cleanup
+    // Send the final clipped video file as a download
+    res.download(finalOutputPath, "clip.mp4", async (err) => {
+      if (err) {
+        console.error("Error sending file:", err);
+      }
+      // Cleanup after sending
       try {
-        if (fs.existsSync(finalOutputPath)) await unlinkAsync(finalOutputPath);
-        if (tempMuxedPath && fs.existsSync(tempMuxedPath)) await unlinkAsync(tempMuxedPath);
-        console.log("Cleanup done.");
+        if (fs.existsSync(finalOutputPath)) {
+          await unlinkAsync(finalOutputPath);
+        }
+        if (tempMuxedPath && fs.existsSync(tempMuxedPath)) {
+          await unlinkAsync(tempMuxedPath);
+        }
+        const partFilePath = finalOutputPath + ".part";
+        if (fs.existsSync(partFilePath)) {
+          await unlinkAsync(partFilePath);
+        }
+        console.log("Temporary file cleanup finished.");
       } catch (cleanupErr) {
         console.error("Cleanup error:", cleanupErr);
       }
@@ -230,7 +236,7 @@ app.post("/api/clip", async (req, res) => {
     console.error("Error processing video section:", error);
     res.status(500).json({
       error: "Failed to process video section",
-      details: error && error.stack ? error.stack : (error instanceof Error ? error.message : "Unknown error"),
+      details: error instanceof Error ? error.message : "Unknown error"
     });
   }
 });
