@@ -76,7 +76,7 @@ app.post("/api/clip", async (req, res) => {
         const ytDlp = spawn("yt-dlp", [
           url,
           "-f",
-          "bestvideo[protocol=https][ext=mp4]+bestaudio[protocol=https][ext=m4a]/bestvideo[protocol=https][ext=webm]+bestaudio[protocol=https][ext=webm]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo[ext=webm]+bestaudio[ext=webm]/best",
+          "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
           "--download-sections",
           section,
           "-o",
@@ -89,7 +89,25 @@ app.post("/api/clip", async (req, res) => {
           "user-agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
           "--merge-output-format",
           "mp4",
-          "--verbose"
+          "--verbose",
+          "--cookies-from-browser",
+          "chrome",
+          "--extractor-args",
+          "youtube:player_client=android",
+          "--geo-bypass",
+          "--no-playlist",
+          "--no-playlist-reverse",
+          "--socket-timeout",
+          "30",
+          "--retries",
+          "3",
+          "--fragment-retries",
+          "3",
+          "--extractor-retries",
+          "3",
+          "--ignore-errors",
+          "--prefer-insecure",
+          "--force-ipv4"
         ]);
 
         ytDlp.stderr.on("data", (data) => {
@@ -137,8 +155,17 @@ app.post("/api/clip", async (req, res) => {
             console.error(`yt-dlp process (muxed) exited code 0 but no output file found.`);
             reject(new Error(`yt-dlp (muxed) indicated success, but no output file was found. Stderr: ${processStderr}`));
           } else {
+            // Enhanced error handling
+            let errorMessage = "Failed to download video";
+            if (processStderr.includes("This content isn't available")) {
+              errorMessage = "This video is not available. It might be private, age-restricted, or region-locked.";
+            } else if (processStderr.includes("Video unavailable")) {
+              errorMessage = "This video is unavailable. It might have been removed or made private.";
+            } else if (processStderr.includes("Sign in to confirm your age")) {
+              errorMessage = "This video is age-restricted and cannot be downloaded.";
+            }
             console.error(`yt-dlp process (muxed) exited with code ${code}. Stderr: ${processStderr}`);
-            reject(new Error(`yt-dlp download (muxed) failed with code ${code}. Stderr: ${processStderr}`));
+            reject(new Error(errorMessage));
           }
         });
 
@@ -149,19 +176,26 @@ app.post("/api/clip", async (req, res) => {
       });
     };
 
-    // Download segment
-    try {
-      tempMuxedPath = await runYtDlpDownload(tempMuxedPathBase, startTime, endTime);
-    } catch (downloadError) {
-      console.error("yt-dlp muxed download failed.", downloadError);
-      return res.status(400).json({
-        error: downloadError.message || "Failed to download video. The video might be unavailable or restricted."
-      });
+    // Download segment with retry logic
+    const maxRetries = 3;
+    let lastError = null;
+    
+    for (let i = 0; i < maxRetries; i++) {
+      try {
+        tempMuxedPath = await runYtDlpDownload(tempMuxedPathBase, startTime, endTime);
+        break;
+      } catch (downloadError) {
+        lastError = downloadError;
+        console.error(`Attempt ${i + 1} failed:`, downloadError);
+        if (i < maxRetries - 1) {
+          await new Promise(resolve => setTimeout(resolve, 2000 * (i + 1)));
+        }
+      }
     }
 
     if (!tempMuxedPath) {
-      return res.status(500).json({
-        error: "Failed to process video: No output file was created"
+      return res.status(400).json({
+        error: lastError?.message || "Failed to download video after multiple attempts. Please try again later."
       });
     }
 
