@@ -18,6 +18,29 @@ if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir);
 }
 
+// User agents to rotate through
+const userAgents = [
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+];
+
+// Get random user agent
+const getRandomUserAgent = () => {
+  return userAgents[Math.floor(Math.random() * userAgents.length)];
+};
+
+// Retry function
+const retry = async (fn, retries = 3, delay = 1000) => {
+  try {
+    return await fn();
+  } catch (error) {
+    if (retries === 0) throw error;
+    await new Promise(resolve => setTimeout(resolve, delay));
+    return retry(fn, retries - 1, delay * 2);
+  }
+};
+
 app.post("/api/clip", async (req, res) => {
   const timestamp = Date.now();
   const tempMuxedPathBase = path.join(uploadsDir, `temp-muxed-${timestamp}`);
@@ -37,11 +60,12 @@ app.post("/api/clip", async (req, res) => {
         let detectedPath = null;
         let stderrBuffer = '';
         const section = `*${startTime}-${endTime}`;
+        
         const ytDlp = spawn("python", [
           "-m", "yt_dlp",
           url,
           "-f",
-          "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best",
+          "bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4][height<=1080]/best",
           "--download-sections",
           section,
           "-o",
@@ -49,7 +73,20 @@ app.post("/api/clip", async (req, res) => {
           "--no-check-certificates",
           "--no-warnings",
           "--merge-output-format",
-          "mp4"
+          "mp4",
+          "--user-agent",
+          getRandomUserAgent(),
+          "--socket-timeout",
+          "30",
+          "--retries",
+          "3",
+          "--fragment-retries",
+          "3",
+          "--extractor-retries",
+          "3",
+          "--ignore-errors",
+          "--no-playlist",
+          "--no-playlist-reverse"
         ]);
 
         ytDlp.stdout.on("data", (data) => {
@@ -97,11 +134,12 @@ app.post("/api/clip", async (req, res) => {
       });
     };
 
-    // Download segment
+    // Download segment with retry logic
     try {
-      tempMuxedPath = await runYtDlpDownload(tempMuxedPathBase, startTime, endTime);
+      tempMuxedPath = await retry(() => runYtDlpDownload(tempMuxedPathBase, startTime, endTime));
     } catch (downloadError) {
-      throw downloadError;
+      console.error("Failed to download after retries:", downloadError);
+      throw new Error("Failed to download video after multiple attempts. Please try again later.");
     }
 
     if (!tempMuxedPath) throw new Error("Missing temporary muxed path after download.");
