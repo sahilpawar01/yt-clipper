@@ -55,8 +55,16 @@ app.post("/api/clip", async (req, res) => {
 
   try {
     const { url, startTime, endTime } = req.body;
+    console.log('Received request:', { url, startTime, endTime });
+
     if (!url || !startTime || !endTime) {
+      console.log('Missing required fields:', { url: !!url, startTime: !!startTime, endTime: !!endTime });
       return res.status(400).json({ error: "url, startTime, and endTime are required" });
+    }
+
+    if (!isValidYouTubeUrl(url)) {
+      console.log('Invalid YouTube URL:', url);
+      return res.status(400).json({ error: "Invalid YouTube URL" });
     }
 
     console.log(`Attempting to download muxed video/audio for clipping from ${url}`);
@@ -73,7 +81,7 @@ app.post("/api/clip", async (req, res) => {
         console.log(`Starting yt-dlp partial download for muxed format to template '${outputPathTemplate}'`);
         const section = `*${startTime}-${endTime}`;
 
-        const ytDlp = spawn("yt-dlp", [
+        const ytDlpArgs = [
           url,
           "-f",
           "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
@@ -108,7 +116,11 @@ app.post("/api/clip", async (req, res) => {
           "--force-ipv4",
           "--no-cookies",
           "--no-cache-dir"
-        ]);
+        ];
+
+        console.log('yt-dlp command:', 'yt-dlp ' + ytDlpArgs.join(' '));
+
+        const ytDlp = spawn("yt-dlp", ytDlpArgs);
 
         ytDlp.stderr.on("data", (data) => {
           console.error(`yt-dlp stderr (muxed): ${data}`);
