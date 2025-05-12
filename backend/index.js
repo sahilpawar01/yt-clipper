@@ -115,7 +115,17 @@ app.post("/api/clip", async (req, res) => {
           "--prefer-insecure",
           "--force-ipv4",
           "--no-cookies",
-          "--no-cache-dir"
+          "--no-cache-dir",
+          "--extractor-args",
+          "youtube:player_skip=webpage,configs",
+          "--extractor-args",
+          "youtube:player_params={\"hl\":\"en\",\"gl\":\"US\"}",
+          "--extractor-args",
+          "youtube:player_client=android",
+          "--extractor-args",
+          "youtube:player_skip=webpage,configs",
+          "--extractor-args",
+          "youtube:player_params={\"hl\":\"en\",\"gl\":\"US\"}"
         ];
 
         console.log('yt-dlp command:', 'yt-dlp ' + ytDlpArgs.join(' '));
@@ -175,6 +185,10 @@ app.post("/api/clip", async (req, res) => {
               errorMessage = "This video is unavailable. It might have been removed or made private.";
             } else if (processStderr.includes("Sign in to confirm your age")) {
               errorMessage = "This video is age-restricted and cannot be downloaded.";
+            } else if (processStderr.includes("This video is private")) {
+              errorMessage = "This video is private and cannot be downloaded.";
+            } else if (processStderr.includes("This video is not available in your country")) {
+              errorMessage = "This video is not available in your region.";
             }
             console.error(`yt-dlp process (muxed) exited with code ${code}. Stderr: ${processStderr}`);
             reject(new Error(errorMessage));
