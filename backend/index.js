@@ -30,7 +30,7 @@ const getRandomUserAgent = () => {
   return userAgents[Math.floor(Math.random() * userAgents.length)];
 };
 
-// Retry function
+// Retry function with exponential backoff
 const retry = async (fn, retries = 3, delay = 1000) => {
   try {
     return await fn();
@@ -41,6 +41,12 @@ const retry = async (fn, retries = 3, delay = 1000) => {
   }
 };
 
+// Validate YouTube URL
+const isValidYouTubeUrl = (url) => {
+  const pattern = /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/.+$/;
+  return pattern.test(url);
+};
+
 app.post("/api/clip", async (req, res) => {
   const timestamp = Date.now();
   const tempMuxedPathBase = path.join(uploadsDir, `temp-muxed-${timestamp}`);
@@ -49,8 +55,14 @@ app.post("/api/clip", async (req, res) => {
 
   try {
     const { url, startTime, endTime } = req.body;
+    
+    // Input validation
     if (!url || !startTime || !endTime) {
       return res.status(400).json({ error: "url, startTime, and endTime are required" });
+    }
+
+    if (!isValidYouTubeUrl(url)) {
+      return res.status(400).json({ error: "Invalid YouTube URL" });
     }
 
     // Download video segment with yt-dlp
@@ -86,7 +98,15 @@ app.post("/api/clip", async (req, res) => {
           "3",
           "--ignore-errors",
           "--no-playlist",
-          "--no-playlist-reverse"
+          "--no-playlist-reverse",
+          "--cookies-from-browser",
+          "chrome",
+          "--geo-bypass",
+          "--no-check-certificate",
+          "--prefer-insecure",
+          "--extractor-args",
+          "youtube:player_client=android",
+          "--force-ipv4"
         ]);
 
         ytDlp.stdout.on("data", (data) => {
@@ -123,8 +143,17 @@ app.post("/api/clip", async (req, res) => {
             console.error("yt-dlp succeeded but no output file found. Stderr:", stderrBuffer);
             reject(new Error("yt-dlp succeeded but no output file found."));
           } else {
+            // Enhanced error handling
+            let errorMessage = "Failed to download video";
+            if (stderrBuffer.includes("This content isn't available")) {
+              errorMessage = "This video is not available. It might be private, age-restricted, or region-locked.";
+            } else if (stderrBuffer.includes("Video unavailable")) {
+              errorMessage = "This video is unavailable. It might have been removed or made private.";
+            } else if (stderrBuffer.includes("Sign in to confirm your age")) {
+              errorMessage = "This video is age-restricted and cannot be downloaded.";
+            }
             console.error("yt-dlp failed with code", code, "Stderr:", stderrBuffer);
-            reject(new Error("yt-dlp failed with code " + code + ". Stderr: " + stderrBuffer));
+            reject(new Error(errorMessage));
           }
         });
 
@@ -139,10 +168,16 @@ app.post("/api/clip", async (req, res) => {
       tempMuxedPath = await retry(() => runYtDlpDownload(tempMuxedPathBase, startTime, endTime));
     } catch (downloadError) {
       console.error("Failed to download after retries:", downloadError);
-      throw new Error("Failed to download video after multiple attempts. Please try again later.");
+      return res.status(400).json({
+        error: downloadError.message || "Failed to download video after multiple attempts. Please try again later."
+      });
     }
 
-    if (!tempMuxedPath) throw new Error("Missing temporary muxed path after download.");
+    if (!tempMuxedPath) {
+      return res.status(500).json({
+        error: "Failed to process video: No output file was created"
+      });
+    }
 
     // Final trim with ffmpeg for compatibility
     const ffmpeg = spawn("ffmpeg", [
