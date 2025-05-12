@@ -86,12 +86,10 @@ app.post("/api/clip", async (req, res) => {
           "--add-header",
           "referer:youtube.com",
           "--add-header",
-          "user-agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          "user-agent:" + getRandomUserAgent(),
           "--merge-output-format",
           "mp4",
           "--verbose",
-          "--cookies-from-browser",
-          "chrome",
           "--extractor-args",
           "youtube:player_client=android",
           "--geo-bypass",
@@ -107,7 +105,9 @@ app.post("/api/clip", async (req, res) => {
           "3",
           "--ignore-errors",
           "--prefer-insecure",
-          "--force-ipv4"
+          "--force-ipv4",
+          "--no-cookies",
+          "--no-cache-dir"
         ]);
 
         ytDlp.stderr.on("data", (data) => {
