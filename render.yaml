@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: yt-clipper-backend
+    env: node
+    buildCommand: |
+      apt-get update && apt-get install -y ffmpeg python3-pip
+      pip3 install yt-dlp
+      cd backend && npm install
+    startCommand: cd backend && npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+    healthCheckPath: /health
+    disk:
+      name: uploads
+      mountPath: /opt/render/project/src/backend/uploads
+      sizeGB: 1 

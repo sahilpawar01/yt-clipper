@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>YouTube Video Clipper</title>
+    <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+    <div class="card">
+        <h2>YouTube Video Clipper</h2>
+        <p class="subtitle">Enter a YouTube URL and start/end times to clip the video.</p>
+        <input id="url" type="text" placeholder="YouTube Video URL" />
+        <div class="time-inputs">
+            <input id="start" type="text" placeholder="Start (HH:MM:SS)" value="00:00:00"/>
+            <input id="end" type="text" placeholder="End (HH:MM:SS)" value="00:01:00"/>
+        </div>
+        <button id="clipBtn">
+            <span class="icon">✂️</span> Clip Video
+        </button>
+        <div id="status"></div>
+    </div>
+    <footer>
+        <span>YouTube Video Clipper &middot; </span>
+    </footer>
+    <script src="popup.js"></script>
+</body>
+</html>

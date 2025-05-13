@@ -75,3 +75,4 @@ dump.rdb
 
 # Optional: Ignore uploads/assets
 /public/uploads/
+*.node_modules

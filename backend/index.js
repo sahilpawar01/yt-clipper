@@ -10,9 +10,16 @@ const unlinkAsync = util.promisify(fs.unlink);
 const app = express();
 const port = process.env.PORT || 3001;
 
-app.use(cors());
+// Configure CORS for Render
+app.use(cors({
+  origin: ['https://yt-clipper.onrender.com', 'http://localhost:3001'],
+  methods: ['GET', 'POST'],
+  credentials: true
+}));
+
 app.use(express.json());
 
+// Create uploads directory if it doesn't exist
 const uploadsDir = path.join(__dirname, "uploads");
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir);
@@ -47,6 +54,11 @@ const isValidYouTubeUrl = (url) => {
   return pattern.test(url);
 };
 
+// Health check endpoint for Render
+app.get("/health", (req, res) => {
+  res.status(200).json({ status: "ok" });
+});
+
 app.post("/api/clip", async (req, res) => {
   const timestamp = Date.now();
   const tempMuxedPathBase = path.join(uploadsDir, `temp-muxed-${timestamp}`);
@@ -66,9 +78,6 @@ app.post("/api/clip", async (req, res) => {
       console.log('Invalid YouTube URL:', url);
       return res.status(400).json({ error: "Invalid YouTube URL" });
     }
-
-    console.log(`Attempting to download muxed video/audio for clipping from ${url}`);
-    console.log(`Using temporary muxed base: ${tempMuxedPathBase}`);
 
     // Download video segment with yt-dlp
     const runYtDlpDownload = (outputPathBase, startTime, endTime) => {
@@ -116,12 +125,6 @@ app.post("/api/clip", async (req, res) => {
           "--force-ipv4",
           "--no-cookies",
           "--no-cache-dir",
-          "--extractor-args",
-          "youtube:player_skip=webpage,configs",
-          "--extractor-args",
-          "youtube:player_params={\"hl\":\"en\",\"gl\":\"US\"}",
-          "--extractor-args",
-          "youtube:player_client=android",
           "--extractor-args",
           "youtube:player_skip=webpage,configs",
           "--extractor-args",
@@ -269,12 +272,17 @@ app.post("/api/clip", async (req, res) => {
 
     console.log(`Processing complete. Final clip available at: ${finalOutputPath}`);
 
-    // Send the final clipped video file as a download
-    res.download(finalOutputPath, "clip.mp4", async (err) => {
-      if (err) {
-        console.error("Error sending file:", err);
-      }
-      // Cleanup after sending
+    // Set appropriate headers for video download
+    res.setHeader('Content-Type', 'video/mp4');
+    res.setHeader('Content-Disposition', 'attachment; filename=clip.mp4');
+    res.setHeader('Transfer-Encoding', 'chunked');
+
+    // Stream the file to the client
+    const fileStream = fs.createReadStream(finalOutputPath);
+    fileStream.pipe(res);
+
+    // Handle cleanup after streaming
+    fileStream.on('end', async () => {
       try {
         if (fs.existsSync(finalOutputPath)) {
           await unlinkAsync(finalOutputPath);
@@ -291,12 +299,33 @@ app.post("/api/clip", async (req, res) => {
         console.error("Cleanup error:", cleanupErr);
       }
     });
-    return;
+
+    // Handle errors during streaming
+    fileStream.on('error', (err) => {
+      console.error("Error streaming file:", err);
+      if (!res.headersSent) {
+        res.status(500).json({ error: "Error streaming file" });
+      }
+    });
+
   } catch (error) {
     console.error("Error processing video section:", error);
+    if (!res.headersSent) {
+      res.status(500).json({
+        error: "Failed to process video section",
+        details: error instanceof Error ? error.message : "Unknown error"
+      });
+    }
+  }
+});
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error('Unhandled error:', err);
+  if (!res.headersSent) {
     res.status(500).json({
-      error: "Failed to process video section",
-      details: error instanceof Error ? error.message : "Unknown error"
+      error: "Internal server error",
+      details: err.message
     });
   }
 });
